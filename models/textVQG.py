@@ -18,7 +18,7 @@ class textVQG(nn.Module):
                  num_layers=1, rnn_cell='LSTM', bidirectional=True,
                  input_dropout_p=0, dropout_p=0,
                  encoder_max_len=None, num_att_layers=2, att_ff_size=512,
-                 embedding=None, z_size=20):
+                 embedding=None, z_size=512):
         
         super(textVQG, self).__init__()
         self.hidden_size = hidden_size
@@ -54,8 +54,8 @@ class textVQG(nn.Module):
                                   embedding=embedding)
 
         
-        self.mu_answer_encoder = nn.Linear(hidden_size, z_size)
-        self.logvar_answer_encoder = nn.Linear(hidden_size, z_size)
+        self.z_space_encodings = nn.Linear(hidden_size, z_size)
+        self.z_space_encoding = nn.Linear(hidden_size, z_size)
          
     
 
@@ -80,9 +80,8 @@ class textVQG(nn.Module):
         
         together = torch.cat((image_features, answer_features), dim=1)
         attended_hiddens = self.answer_attention(together)
-        mus = self.mu_answer_encoder(attended_hiddens)
-        logvars = self.logvar_answer_encoder(attended_hiddens)
-        return mus, logvars
+        z_space_op1 = self.z_space_encodings(attended_hiddens)
+        return z_space_op1
 
     
     def decode_questions(self, image_features, zs,
@@ -114,8 +113,7 @@ class textVQG(nn.Module):
         answer_hiddens = self.encode_answers(answers, alengths)
 
         
-        mus, logvars = self.encode_into_z(image_features, answer_hiddens)
-        zs = self.reparameterize(mus, logvars)
+        zs= self.encode_into_z(image_features, answer_hiddens)
         result = self.decode_questions(image_features, zs,
                                        questions=questions,
                                        decode_function=decode_function,
@@ -128,8 +126,7 @@ class textVQG(nn.Module):
     def encode_from_answer(self, images, answers, lengths=None):
         image_features = self.encode_images(images)
         answer_hiddens = self.encode_answers(answers, lengths)
-        mus, logvars = self.encode_into_z(image_features, answer_hiddens)
-        zs = self.reparameterize(mus, logvars)
+        zs= self.encode_into_z(image_features, answer_hiddens)
         return image_features, zs
 
     
@@ -162,10 +159,6 @@ class textVQG(nn.Module):
         params = filter(lambda p: p.requires_grad, params)
         return params
 
-    def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5*logvar)
-        eps = torch.randn_like(std)
-        return eps.mul(std).add_(mu)
 
     def modify_hidden(self, func, hidden, rnn_cell):
         
