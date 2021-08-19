@@ -18,7 +18,6 @@ from utils import get_glove_embedding
 from utils import get_loader
 from utils import load_vocab
 from utils import process_lengths
-from utils import gaussian_KL_loss
 
 
 
@@ -72,8 +71,7 @@ def evaluate(vqg, data_loader, criterion, l2_criterion, args):
         # Forward, Backward and Optimize
         image_features = vqg.encode_images(images)
         answer_features = vqg.encode_answers(answers, alengths)
-        mus, logvars = vqg.encode_into_z(image_features, answer_features)
-        zs = vqg.reparameterize(mus, logvars)
+        zs = vqg.encode_into_z(image_features, answer_features)
         (outputs, _, other) = vqg.decode_questions(
                 image_features, zs, questions=questions,
                 teacher_forcing_ratio=1.0)
@@ -98,11 +96,6 @@ def evaluate(vqg, data_loader, criterion, l2_criterion, args):
                                        batch_first=True)[0]
         gen_loss = criterion(outputs, targets)
         total_gen_loss += gen_loss.data.item()
-
-        # Get KL loss if it exists.
-        kl_loss = gaussian_KL_loss(mus, logvars)
-        total_kl += kl_loss.item()
-
         
 
 
@@ -118,8 +111,7 @@ def evaluate(vqg, data_loader, criterion, l2_criterion, args):
                           'KL: %.4f '
                           'z-t-KL: %.4f'
                          % (delta_time, iterations, total_steps,
-                            total_gen_loss/(iterations+1),
-                            total_kl/(iterations+1)))
+                            total_gen_loss/(iterations+1))
     
     return total_gen_loss / (iterations+1)
 
@@ -166,14 +158,6 @@ def compare_outputs(images, questions, answers,
                      % (output,
                         question, answer))
         logging.info("         ")
-
-
-def compute_two_gaussian_loss(mu1, logvar1, mu2, logvar2):
-    
-    numerator = logvar1.exp() + torch.pow(mu1 - mu2, 2)
-    fraction = torch.div(numerator, (logvar2.exp() + 1e-8))
-    kl = 0.5 * torch.sum(logvar2 - logvar1 + fraction - 1)
-    return kl / (mu1.size(0) + 1e-8)
 
 
 def train(args):
@@ -305,8 +289,7 @@ def train(args):
             answer_features = vqg.encode_answers(answers, alengths)
 
             # Question generation.
-            mus, logvars = vqg.encode_into_z(image_features, answer_features)
-            zs = vqg.reparameterize(mus, logvars)
+            zs = vqg.encode_into_z(image_features, answer_features)
             (outputs, _, _) = vqg.decode_questions(
                     image_features, zs, questions=questions,
                     teacher_forcing_ratio=1.0)
@@ -334,11 +317,6 @@ def train(args):
             total_loss += args.lambda_gen * gen_loss
             gen_loss = gen_loss.item()
 
-            # Variational loss.
-            kl_loss = gaussian_KL_loss(mus, logvars)
-            total_loss += args.lambda_z * kl_loss
-            kl_loss = kl_loss.item()
-
             
 
             # Generator Backprop.
@@ -353,10 +331,10 @@ def train(args):
                 delta_time = time.time() - start_time
                 start_time = time.time()
                 logging.info('Time: %.4f, Epoch [%d/%d], Step [%d/%d], '
-                             'LR: %f,  KL: %.4f, '
+                             'LR: %f,   '
                              % (delta_time, epoch, args.num_epochs, i,
-                                total_steps, gen_optimizer.param_groups[0]['lr'],
-                                 kl_loss))
+                                total_steps, gen_optimizer.param_groups[0]['lr']
+                                ))
 
             
 
