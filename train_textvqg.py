@@ -55,8 +55,6 @@ def evaluate(vqg, data_loader, criterion, l2_criterion, args):
         total_steps = min(len(data_loader), args.eval_steps)
     start_time = time.time()
     total_gen_loss = 0.0
-    total_kl = 0.0
-    total_z_t_kl = 0.0
     for iterations, (images, questions, answers,
            qindices) in enumerate(data_loader):
 
@@ -108,8 +106,7 @@ def evaluate(vqg, data_loader, criterion, l2_criterion, args):
              delta_time = time.time() - start_time
              start_time = time.time()
              logging.info('Time: %.4f, Step [%d/%d], gen loss: %.4f, '
-                          'KL: %.4f '
-                          'z-t-KL: %.4f'
+                         
                          % (delta_time, iterations, total_steps,
                             total_gen_loss/(iterations+1))
     
@@ -256,7 +253,6 @@ def train(args):
 
     # Optional losses. Initialized here for logging.
     
-    kl_loss = 0.0
     
     for epoch in range(args.num_epochs):
         for i, (images, questions, answers,
