@@ -75,9 +75,6 @@ class textVQG(nn.Module):
         # Setup stacked attention to combine image and answer features.
         self.answer_attention = MLP(2*hidden_size, att_ff_size, hidden_size,
                                     num_layers=num_att_layers)
-        if self.category_space:
-            self.category_attention = MLP(2*hidden_size, att_ff_size, hidden_size,
-                                          num_layers=num_att_layers)
 
         # Setup question decoder.
         self.z_decoder = nn.Linear(z_size, hidden_size)
@@ -92,30 +89,16 @@ class textVQG(nn.Module):
                                   dropout_p=dropout_p,
                                   embedding=embedding)
 
-        # Setup encodering to z space.
-        self.mu_answer_encoder = nn.Linear(hidden_size, z_size)
-        self.logvar_answer_encoder = nn.Linear(hidden_size, z_size)
-        if self.category_space:
-            self.mu_category_encoder = nn.Linear(hidden_size, z_size)
-            self.logvar_category_encoder = nn.Linear(hidden_size, z_size)
 
-        # Setup image reconstruction.
-        if self.image_recon:
-            self.image_reconstructor = MLP(
-                    z_size, att_ff_size, hidden_size,
-                    num_layers=num_att_layers)
+
+   
+        
 
         # Setup answer reconstruction.
         if self.answer_recon:
             self.answer_reconstructor = MLP(
                     z_size, att_ff_size, hidden_size,
                     num_layers=num_att_layers)
-
-        # Setup category reconstruction.
-        #if self.category_space:
-        #    self.category_reconstructor = MLP(
-        #            z_size, att_ff_size, hidden_size,
-        #            num_layers=num_att_layers)
 
     def flatten_parameters(self):
         if hasattr(self, 'decoder'):
@@ -192,7 +175,7 @@ class textVQG(nn.Module):
         Returns:
             Batch of image features.
         """
-        #print("image type",(images.size()))
+        
         return self.encoder_cnn(images)
 
     def encode_categories(self, categories):
@@ -216,7 +199,7 @@ class textVQG(nn.Module):
         Returns:
             batch of answer features.
         """
-        #print("answer",(answers.size()))
+       
         _, encoder_hidden = self.answer_encoder(
                 answers, alengths, None)
         if self.answer_encoder.rnn_cell == nn.LSTM:
@@ -224,8 +207,6 @@ class textVQG(nn.Module):
 
         # Pick the hidden vector from the top layer.
         encoder_hidden = encoder_hidden[-1, :, :].squeeze()
-        #print("encode answer",encoder_hidden.size())
-        #print("encoder hidden",(encoder_hidden.size()))
         return encoder_hidden
 
     def encode_into_z(self, image_features, answer_features):
@@ -330,24 +311,20 @@ class textVQG(nn.Module):
         return result
 
     def reconstruct_inputs(self, image_features, answer_features):
-        """Reconstructs the image features using the VAE.
+        """
 
         Args:
-            image_features: Batch of image features.
             answer_features: Batch of answer features.
 
         Returns:
-            Reconstructed image features and answer features.
+            Reconstructed answer features.
         """
-        recon_image_features = None
+       
         recon_answer_features = None
         zs = self.encode_into_z(image_features, answer_features)
-        #zs = self.reparameterize(mus, logvars)
-        if self.image_recon:
-            recon_image_features = self.image_reconstructor(zs)
         if self.answer_recon:
             recon_answer_features = self.answer_reconstructor(zs)
-        return recon_image_features, recon_answer_features
+        return recon_answer_features
 
     def encode_from_answer(self, images, answers, lengths=None):
         """Encodes images and categories in t-space.
@@ -363,24 +340,10 @@ class textVQG(nn.Module):
         image_features = self.encode_images(images)
         answer_hiddens = self.encode_answers(answers, lengths)
         zs = self.encode_into_z(image_features, answer_hiddens)
-        #zs = self.reparameterize(mus, logvars)
+        
         return image_features, zs
 
-    def encode_from_category(self, images, categories):
-        """Encodes images and categories in t-space.
 
-        Args:
-            images: Batch of image Tensors.
-            categories: Batch of category Tensors.
-
-        Returns:
-            Batch of latent space encodings.
-        """
-        image_features = self.encode_images(images)
-        category_hiddens = self.encode_categories(categories)
-        mus, logvars = self.encode_into_t(image_features, category_hiddens)
-        ts = self.reparameterize(mus, logvars)
-        return image_features, ts
 
     def predict_from_answer(self, images, answers, lengths=None,
                             questions=None, teacher_forcing_ratio=0,
@@ -401,29 +364,6 @@ class textVQG(nn.Module):
             into the vocab word.
         """
         image_features, zs = self.encode_from_answer(images, answers, lengths=lengths)
-        outputs, _, _ = self.decode_questions(image_features, zs, questions=questions,
-                                              decode_function=decode_function,
-                                              teacher_forcing_ratio=teacher_forcing_ratio)
-        return self.parse_outputs_to_tokens(outputs)
-
-    def predict_from_category(self, images, categories,
-                              questions=None, teacher_forcing_ratio=0,
-                              decode_function=F.log_softmax):
-        """Outputs the predicted vocab tokens for the answers in a minibatch.
-
-        Args:
-            images: Batch of image Variables.
-            categories: Batch of category Variables.
-            questions: Batch of question Variables.
-            teacher_forcing_ratio: Whether to predict with teacher forcing.
-            decode_function: What to use when choosing a word from the
-                distribution over the vocabulary.
-
-        Returns:
-            A tensor with BATCH_SIZE X MAX_LEN where each element is the index
-            into the vocab word.
-        """
-        image_features, zs = self.encode_from_category(images, categories)
         outputs, _, _ = self.decode_questions(image_features, zs, questions=questions,
                                               decode_function=decode_function,
                                               teacher_forcing_ratio=teacher_forcing_ratio)
