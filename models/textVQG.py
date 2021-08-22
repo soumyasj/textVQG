@@ -112,23 +112,16 @@ class textVQG(nn.Module):
         return params
 
     def info_parameters(self):
-        params = (list(self.answer_attention.parameters()) +
-                  list(self.mu_answer_encoder.parameters()) +
-                  list(self.logvar_answer_encoder.parameters()))
+        params = (list(self.answer_attention.parameters()))
 
         # Reconstruction parameters.
-        if self.image_recon:
-            params += list(self.image_reconstructor.parameters())
+        
         if self.answer_recon:
             params += list(self.answer_reconstructor.parameters())
 
         params = filter(lambda p: p.requires_grad, params)
         return params
 
-    def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5*logvar)
-        eps = torch.randn_like(std)
-        return eps.mul(std).add_(mu)
 
     def modify_hidden(self, func, hidden, rnn_cell):
         """Applies the function func to the hidden representation.
@@ -219,29 +212,11 @@ class textVQG(nn.Module):
         Returns:
             mus and logvars of the batch.
         """
-        #print("image feat",image_features.size(),"answer feat",answer_features.size())
+       
         together = torch.cat((image_features, answer_features), dim=1)
         attended_hiddens = self.answer_attention(together)
-        mus = self.mu_answer_encoder(attended_hiddens)
-        logvars = self.logvar_answer_encoder(attended_hiddens)
-        print(mus.size(),logvars.size(),attended_hiddens.size())
         return attended_hiddens
 
-    def encode_into_t(self, image_features, category_features):
-        """Encodes the attended features into t space.
-
-        Args:
-            image_features: Batch of image features.
-            category_features: Batch of answer features.
-
-        Returns:
-            mus and logvars of the batch.
-        """
-        together = torch.cat((image_features, category_features), dim=1)
-        attended_hiddens = self.category_attention(together)
-        mus = self.mu_category_encoder(attended_hiddens)
-        logvars = self.logvar_category_encoder(attended_hiddens)
-        return mus, logvars
 
     def decode_questions(self, image_features, zs,
                          questions=None, teacher_forcing_ratio=0,
@@ -302,7 +277,7 @@ class textVQG(nn.Module):
 
         # Calculate the mus and logvars.
         zs = self.encode_into_z(image_features, answer_hiddens)
-        #zs = self.reparameterize(mus, logvars)
+      
         result = self.decode_questions(image_features, zs,
                                        questions=questions,
                                        decode_function=decode_function,
