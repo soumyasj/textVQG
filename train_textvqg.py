@@ -1,4 +1,7 @@
-#Training script for textVQG
+"""This script is used to VAE question generation.
+"""
+
+#/media/shankar/05a3ed34-f47f-4e90-b99d-dd973f2b86da/VQA_REU
 
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -12,17 +15,26 @@ import time
 import torch
 import torch.nn as nn
 from utils import NLGEval
-from models import textVQG
+from models import IQ
 from utils import Vocabulary
 from utils import get_glove_embedding
 from utils import get_loader
 from utils import load_vocab
 from utils import process_lengths
+from utils import gaussian_KL_loss
 
 
 
 def create_model(args, vocab, embedding=None):
-    
+    """Creates the model.
+
+    Args:
+        args: Instance of Argument Parser.
+        vocab: Instance of Vocabulary.
+
+    Returns:
+        An IQ model.
+    """
     # Load GloVe embedding.
     if args.use_glove:
         embedding = get_glove_embedding(args.embedding_name,
@@ -32,8 +44,9 @@ def create_model(args, vocab, embedding=None):
         embedding = None
 
     # Build the models
-    logging.info('Creating textVQG model...')
-    vqg = textVQG(len(vocab), args.max_length, args.hidden_size,
+    logging.info('Creating IQ model...')
+    vqg = IQ(len(vocab), args.max_length, args.hidden_size,
+             args.num_categories,
              vocab(vocab.SYM_SOQ), vocab(vocab.SYM_EOS),
              num_layers=args.num_layers,
              rnn_cell=args.rnn_cell,
@@ -42,27 +55,40 @@ def create_model(args, vocab, embedding=None):
              encoder_max_len=args.encoder_max_len,
              embedding=embedding,
              num_att_layers=args.num_att_layers,
-             z_size=args.z_size)
+             z_size=args.z_size,
+             no_answer_recon=args.no_answer_recon)
     return vqg
 
 
 def evaluate(vqg, data_loader, criterion, l2_criterion, args):
-    
+    """Calculates vqg average loss on data_loader.
+
+    Args:
+        vqg: question generation model.
+        data_loader: Iterator for the data.
+        criterion: The loss function used to evaluate the loss.
+        l2_criterion: The loss function used to evaluate the l2 loss.
+        args: ArgumentParser object.
+
+    Returns:
+        A float value of average loss.
+    """
     vqg.eval()
-    
+    total_gen_loss = 0.0
+    total_recon_image_loss = 0.0
     total_steps = len(data_loader)
     if args.eval_steps is not None:
         total_steps = min(len(data_loader), args.eval_steps)
     start_time = time.time()
-    total_gen_loss = 0.0
     for iterations, (images, questions, answers,
-           qindices) in enumerate(data_loader):
+            categories, qindices) in enumerate(data_loader):
 
         # Set mini-batch dataset
         if torch.cuda.is_available():
             images = images.cuda()
             questions = questions.cuda()
             answers = answers.cuda()
+            categories = categories.cuda()
             qindices = qindices.cuda()
         alengths = process_lengths(answers)
 
@@ -70,6 +96,16 @@ def evaluate(vqg, data_loader, criterion, l2_criterion, args):
         image_features = vqg.encode_images(images)
         answer_features = vqg.encode_answers(answers, alengths)
         zs = vqg.encode_into_z(image_features, answer_features)
+        
+        #1. Image features from pretrained resnet, 2. answer features from olra rnn: -> zs 
+
+        #1. image features from contrastive image encoder(a), 2. text features from contrastive(b)
+
+        #concatenate (a, b) = ab
+        
+        print("zs: ",zs.size())
+
+        #zs = vqg.reparameterize(mus, logvars)
         (outputs, _, other) = vqg.decode_questions(
                 image_features, zs, questions=questions,
                 teacher_forcing_ratio=1.0)
@@ -94,8 +130,31 @@ def evaluate(vqg, data_loader, criterion, l2_criterion, args):
                                        batch_first=True)[0]
         gen_loss = criterion(outputs, targets)
         total_gen_loss += gen_loss.data.item()
-        
 
+     
+
+
+        # Category.
+        if not args.no_category_space:
+            category_features = vqg.encode_categories(categories)
+            t_mus, t_logvars = vqg.encode_into_t(
+                    image_features, category_features)
+            t_kl = gaussian_KL_loss(t_mus, t_logvars)
+            z_t_kl = compute_two_gaussian_loss(
+                    mus, logvars, t_mus, t_logvars)
+
+        # Reconstruction.
+        if not args.no_image_recon or not args.no_answer_recon:
+            image_targets = image_features.detach()
+            answer_targets = answer_features.detach()
+            recon_image_features, recon_answer_features = vqg.reconstruct_inputs(
+                    image_targets, answer_targets)
+            if not args.no_image_recon:
+                recon_i_loss = l2_criterion(recon_image_features, image_targets)
+                total_recon_image_loss += recon_i_loss.item()
+            if not args.no_answer_recon:
+                recon_a_loss = l2_criterion(recon_answer_features, answer_targets)
+                
 
         # Quit after eval_steps.
         if args.eval_steps is not None and iterations >= args.eval_steps:
@@ -106,11 +165,14 @@ def evaluate(vqg, data_loader, criterion, l2_criterion, args):
              delta_time = time.time() - start_time
              start_time = time.time()
              logging.info('Time: %.4f, Step [%d/%d], gen loss: %.4f, '
-                         
+                          ' I-recon: %.4f, A-recon: %.4f, '
+        
                          % (delta_time, iterations, total_steps,
-                            total_gen_loss/(iterations+1))
-    
-    return total_gen_loss / (iterations+1)
+                            total_gen_loss/(iterations+1),
+                            total_recon_image_loss/(iterations+1),
+                            ))
+    total_info_loss = total_recon_image_loss 
+    return total_gen_loss / (iterations+1), total_info_loss / (iterations + 1)
 
 
 def run_eval(vqg, data_loader, criterion, l2_criterion, args, epoch,
@@ -128,13 +190,44 @@ def run_eval(vqg, data_loader, criterion, l2_criterion, args, epoch,
     logging.info('=' * 80)
 
 
+def sample_for_each_category(vqg, image, args):
+    """Sample a question per category.
+
+    Args:
+        vqg: Question generation model.
+        image: The image for which to generate questions for.
+        args: Instance of ArgumentParser.
+
+    Returns:
+        A list of questions per category.
+    """
+    if args.no_category_space:
+        return None
+    categories = torch.LongTensor(range(args.num_categories))
+    if torch.cuda.is_available():
+        categories = categories.cuda()
+    images = image.unsqueeze(0).expand((
+        args.num_categories, image.size(0), image.size(1), image.size(2)))
+    outputs = vqg.predict_from_category(images, categories)
+    return outputs
 
 
-
-def compare_outputs(images, questions, answers, 
+def compare_outputs(images, questions, answers, categories,
                     alengths, vqg, vocab, logging, cat2name,
-                    args, num_show=5):
-    
+                    args, num_show=8):
+    """Sanity check generated output as we train.
+
+    Args:
+        images: Tensor containing images.
+        questions: Tensor containing questions as indices.
+        answers: Tensor containing answers as indices.
+        categories: Tensor containing categories as indices.
+        alengths: list of answer lengths.
+        vqg: A question generation instance.
+        vocab: An instance of Vocabulary.
+        logging: logging to use to report results.
+        cat2name: Mapping from category index to answer type name.
+    """
     vqg.eval()
 
     # Forward pass through the model.
@@ -144,7 +237,15 @@ def compare_outputs(images, questions, answers,
         logging.info("         ")
         i = random.randint(0, images.size(0) - 1)  # Inclusive.
 
-        
+        # Sample some types.
+        if not args.no_category_space:
+            category_outputs = vqg.predict_from_category(images, categories)
+            category_question = vocab.tokens_to_words(category_outputs[i])
+            logging.info('Typed question: %s' % category_question)
+            category_checks = sample_for_each_category(vqg, images[i], args)
+            category_checks = [cat2name[idx] + ': ' + vocab.tokens_to_words(category_checks[j])
+                           for idx, j in enumerate(range(category_checks.size(0)))]
+            logging.info('category checks: ' + ', '.join(category_checks))
 
         # Log the outputs.
         output = vocab.tokens_to_words(outputs[i])
@@ -152,9 +253,28 @@ def compare_outputs(images, questions, answers,
         answer = vocab.tokens_to_words(answers[i])
         logging.info('Sampled question : %s\n'
                      'Target  question (%s): %s -> %s'
-                     % (output,
+                     % (output, cat2name[categories[i].item()],
                         question, answer))
         logging.info("         ")
+
+
+def compute_two_gaussian_loss(mu1, logvar1, mu2, logvar2):
+    """Computes the KL loss between the embedding attained from the answers
+    and the categories.
+
+    KL divergence between two gaussians:
+        log(sigma_2/sigma_1) + (sigma_2^2 + (mu_1 - mu_2)^2)/(2sigma_1^2) - 0.5
+
+    Args:
+        mu1: Means from first space.
+        logvar1: Log variances from first space.
+        mu2: Means from second space.
+        logvar2: Means from second space.
+    """
+    numerator = logvar1.exp() + torch.pow(mu1 - mu2, 2)
+    fraction = torch.div(numerator, (logvar2.exp() + 1e-8))
+    kl = 0.5 * torch.sum(logvar2 - logvar1 + fraction - 1)
+    return kl / (mu1.size(0) + 1e-8)
 
 
 def train(args):
@@ -187,22 +307,15 @@ def train(args):
     # Load vocabulary wrapper.
     vocab = load_vocab(args.vocab_path)
 
-    
+    # Load the category types.
+    cat2name = json.load(open(args.cat2name))
 
     # Build data loader
     logging.info("Building data loader...")
     train_sampler = None
     val_sampler = None
-    if os.path.exists(args.train_dataset_weights):
-        train_weights = json.load(open(args.train_dataset_weights))
-        train_weights = torch.DoubleTensor(train_weights)
-        train_sampler = torch.utils.data.sampler.WeightedRandomSampler(
-                train_weights, len(train_weights))
-    if os.path.exists(args.val_dataset_weights):
-        val_weights = json.load(open(args.val_dataset_weights))
-        val_weights = torch.DoubleTensor(val_weights)
-        val_sampler = torch.utils.data.sampler.WeightedRandomSampler(
-                val_weights, len(val_weights))
+   
+   
     data_loader = get_loader(args.dataset, transform,
                                  args.batch_size, shuffle=False,
                                  num_workers=args.num_workers,
@@ -252,19 +365,22 @@ def train(args):
     n_steps = 0
 
     # Optional losses. Initialized here for logging.
-    
-    
+    recon_answer_loss = 0.0
+    #recon_image_loss = 0.0
+  
+  
+  
     for epoch in range(args.num_epochs):
         for i, (images, questions, answers,
-                 qindices) in enumerate(data_loader):
+                categories, qindices) in enumerate(data_loader):
             n_steps += 1
-
+           
             # Set mini-batch dataset.
             if torch.cuda.is_available():
                 images = images.cuda()
                 questions = questions.cuda()
                 answers = answers.cuda()
-               
+                categories = categories.cuda()
                 qindices = qindices.cuda()
             alengths = process_lengths(answers)
 
@@ -274,7 +390,7 @@ def train(args):
                     n_steps % args.eval_every_n_steps == 0):
                 run_eval(vqg, val_data_loader, criterion, l2_criterion,
                          args, epoch, scheduler, info_scheduler)
-                compare_outputs(images, questions, answers,
+                compare_outputs(images, questions, answers, categories,
                                 alengths, vqg, vocab, logging, cat2name, args)
 
             # Forward.
@@ -283,31 +399,47 @@ def train(args):
             info_optimizer.zero_grad()
             image_features = vqg.encode_images(images)
             answer_features = vqg.encode_answers(answers, alengths)
+            ocr_token_pos = vqg.encode_ocr_pos()
+            #print("answer features: ",answer_features.size())
 
             # Question generation.
             zs = vqg.encode_into_z(image_features, answer_features)
+
+            commbined = nn.stack(zs, mlp_feat, dim=)
+            combined = nn.Linear(1024, 512)
+            print("zs: ",zs.size())
+            #zs = vqg.reparameterize(mus, logvars)
             (outputs, _, _) = vqg.decode_questions(
                     image_features, zs, questions=questions,
                     teacher_forcing_ratio=1.0)
 
+            #print("questions: ",questions.size())
             # Reorder the questions based on length.
             questions = torch.index_select(questions, 0, qindices)
+            #print("questions: ",questions.size())
 
             # Ignoring the start token.
             questions = questions[:, 1:]
+            #print("questions size: ",len(questions))
+            #print("output size: ",len(outputs))
             qlengths = process_lengths(questions)
 
             # Convert the output from MAX_LEN list of (BATCH x VOCAB) ->
             # (BATCH x MAX_LEN x VOCAB).
             outputs = [o.unsqueeze(1) for o in outputs]
+            #print("outputs: ",len(outputs))
             outputs = torch.cat(outputs, dim=1)
+            #print("outputs: ", outputs.size())
             outputs = torch.index_select(outputs, 0, qindices)
-
+            print("outputs: ", outputs.size())
             # Calculate the generation loss.
             targets = pack_padded_sequence(questions, qlengths,
                                            batch_first=True)[0]
+            #print("target size: ",targets.size())                          
             outputs = pack_padded_sequence(outputs, qlengths,
                                            batch_first=True)[0]
+            print("target size: ",targets.size(),"----","output size: ",outputs.size())
+            #break;
             gen_loss = criterion(outputs, targets)
             total_loss = 0.0
             total_loss += args.lambda_gen * gen_loss
@@ -315,11 +447,40 @@ def train(args):
 
             
 
+            
+
             # Generator Backprop.
             total_loss.backward()
             gen_optimizer.step()
 
-            
+            # Reconstruction loss.
+            recon_image_loss = 0.0
+            recon_answer_loss = 0.0
+            if not args.no_answer_recon or not args.no_image_recon:
+                total_info_loss = 0.0
+                gen_optimizer.zero_grad()
+                info_optimizer.zero_grad()
+                answer_targets = answer_features.detach()
+                image_targets = image_features.detach()
+                recon_image_features, recon_answer_features = vqg.reconstruct_inputs(
+                        image_targets, answer_targets)
+
+                # Answer reconstruction loss.
+                if not args.no_answer_recon:
+                    recon_a_loss = l2_criterion(recon_answer_features, answer_targets)
+                    total_info_loss += args.lambda_a * recon_a_loss
+                    recon_answer_loss = recon_a_loss.item()
+
+                # Image reconstruction loss.
+                if not args.no_image_recon:
+                    recon_i_loss = l2_criterion(recon_image_features, image_targets)
+                    total_info_loss += args.lambda_i * recon_i_loss
+                    recon_image_loss = recon_i_loss.item()
+
+                # Info backprop.
+                total_info_loss.backward()
+                info_optimizer.step()
+
 
 
             # Print log info
@@ -327,9 +488,13 @@ def train(args):
                 delta_time = time.time() - start_time
                 start_time = time.time()
                 logging.info('Time: %.4f, Epoch [%d/%d], Step [%d/%d], '
-                             'LR: %f,   '
+                             'LR: %f, gen: %.4f,  '
+                             'I-recon: %.4f, A-recon: %.4f, '
+                             
                              % (delta_time, epoch, args.num_epochs, i,
-                                total_steps, gen_optimizer.param_groups[0]['lr']
+                                total_steps, gen_optimizer.param_groups[0]['lr'],
+                                gen_loss, 
+                                recon_image_loss, recon_answer_loss
                                 ))
 
             
@@ -353,27 +518,8 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    # Data parameters.
-    parser.add_argument('--vocab-path', type=str,
-                        default='/home/shankar/Desktop/VQA_REU/Stvqa/vocab_iq_2.json',
-                        help='Path for vocabulary wrapper.')
-    parser.add_argument('--dataset', type=str,
-                        default='/home/shankar/Desktop/VQA_REU/Stvqa/iq_dataset_cat12.hdf5',
-                        help='Path for train annotation json file.')
-    parser.add_argument('--val-dataset', type=str,
-                        default='/home/shankar/Desktop/VQA_REU/Stvqa/iq_dataset_cat12.hdf5',
-                        help='Path for train annotation json file.')
-    parser.add_argument('--train-dataset-weights', type=str,
-                        default='/home/shankar/Desktop/VQA_REU/Stvqa/data/processed/iq_train_dataset_weights2.json',
-                        help='Location of sampling weights for training set.')
-    parser.add_argument('--val-dataset-weights', type=str,
-                        default='/home/shankar/Desktop/VQA_REU/Stvqa/data/processed/iq_val_dataset_weights2.json',
-                        help='Location of sampling weights for training set.')
-    parser.add_argument('--load-model', type=str, default=None,
-                        help='Location of where the model weights are.')
-
     # Session parameters.
-    parser.add_argument('--model-path', type=str, default='weights2/tf1/',
+    parser.add_argument('--model-path', type=str, default='random/tf1/',
                         help='Path for saving trained models')
     parser.add_argument('--crop-size', type=int, default=224,
                         help='Size for randomly cropping images')
@@ -385,7 +531,7 @@ if __name__ == '__main__':
                         help='Number of eval steps to run.')
     parser.add_argument('--eval-every-n-steps', type=int, default=300,
                         help='Run eval after every N steps.')
-    parser.add_argument('--num-epochs', type=int, default=10)
+    parser.add_argument('--num-epochs', type=int, default=20)
     parser.add_argument('--batch-size', type=int, default=32)
     parser.add_argument('--num-workers', type=int, default=8)
     parser.add_argument('--learning-rate', type=float, default=0.001)
@@ -393,12 +539,50 @@ if __name__ == '__main__':
     parser.add_argument('--patience', type=int, default=10)
     parser.add_argument('--max-examples', type=int, default=None,
                         help='For debugging. Limit examples in database.')
+
+    # Lambda values.
+    parser.add_argument('--lambda-gen', type=float, default=1.0,
+                        help='coefficient to be added in front of the generation loss.')
+    parser.add_argument('--lambda-z', type=float, default=0.001,
+                        help='coefficient to be added in front of the kl loss.')
+    parser.add_argument('--lambda-t', type=float, default=0.0001,
+                        help='coefficient to be added with the type space loss.')
+    parser.add_argument('--lambda-a', type=float, default=0.01,
+                        help='coefficient to be added with the answer recon loss.')
+    parser.add_argument('--lambda-i', type=float, default=0.0001,
+                        help='coefficient to be added with the image recon loss.')
+    parser.add_argument('--lambda-z-t', type=float, default=0.001,
+                        help='coefficient to be added with the t and z space loss.')
+
+    # Data parameters.
+    parser.add_argument('--vocab-path', type=str,
+                        default='/media/shankar/05a3ed34-f47f-4e90-b99d-dd973f2b86da/VQA_REU/Stvqa/vocab_iq_task_1.json',
+                        help='Path for vocabulary wrapper.')
+    parser.add_argument('--dataset', type=str,
+                        default='/media/shankar/05a3ed34-f47f-4e90-b99d-dd973f2b86da/VQA_REU/Stvqa/iq_dataset_cat.hdf5',
+                        help='Path for train annotation json file.')
+    parser.add_argument('--val-dataset', type=str,
+                        default='/media/shankar/05a3ed34-f47f-4e90-b99d-dd973f2b86da/VQA_REU/Stvqa/iq_dataset_cat.hdf5',
+                        help='Path for train annotation json file.')
+    parser.add_argument('--train-dataset-weights', type=str,
+                        default='/media/shankar/05a3ed34-f47f-4e90-b99d-dd973f2b86da/VQA_REU/Stvqa/data/processed/iq_train_dataset_weights2.json',
+                        help='Location of sampling weights for training set.')
+    parser.add_argument('--val-dataset-weights', type=str,
+                        default='/media/shankar/05a3ed34-f47f-4e90-b99d-dd973f2b86da/VQA_REU/Stvqa/data/processed/iq_val_dataset_weights2.json',
+                        help='Location of sampling weights for training set.')
+    parser.add_argument('--cat2name', type=str,
+                        default='/media/shankar/05a3ed34-f47f-4e90-b99d-dd973f2b86da/VQA_REU/Stvqa/cat2name.json',
+                        help='Location of mapping from category to type name.')
+    parser.add_argument('--load-model', type=str, default=None,
+                        help='Location of where the model weights are.')
+
+
     # Model parameters
     parser.add_argument('--rnn-cell', type=str, default='LSTM',
                         help='Type of rnn cell (GRU, RNN or LSTM).')
     parser.add_argument('--hidden-size', type=int, default=512,
                         help='Dimension of lstm hidden states.')
-    parser.add_argument('--num-layers', type=int, default=2,
+    parser.add_argument('--num-layers', type=int, default=1,
                         help='Number of layers in lstm.')
     parser.add_argument('--max-length', type=int, default=20,
                         help='Maximum sequence length for outputs.')
@@ -410,6 +594,8 @@ if __name__ == '__main__':
                         help='Whether to use GloVe embeddings.')
     parser.add_argument('--embedding-name', type=str, default='6B',
                         help='Name of the GloVe embedding to use.')
+    parser.add_argument('--num-categories', type=int, default=16,
+                        help='Number of answer types we use.')
     parser.add_argument('--dropout-p', type=float, default=0.3,
                         help='Dropout applied to the RNN model.')
     parser.add_argument('--input-dropout-p', type=float, default=0.3,
@@ -419,11 +605,15 @@ if __name__ == '__main__':
     parser.add_argument('--z-size', type=int, default=512,
                         help='Dimensions to use for hidden variational space.')
 
-    # Lambda values.
-    parser.add_argument('--lambda-z', type=float, default=0.001,
-                        help='coefficient to be added in front of the kl loss.')
-    
+    # Ablations.
+    parser.add_argument('--no-image-recon', action='store_true', default=False,
+                        help='Does not try to reconstruct image.')
+    parser.add_argument('--no-answer-recon', action='store_true', default=False,
+                        help='Does not try to reconstruct answer.')
+    parser.add_argument('--no-category-space', action='store_true', default=True,
+                        help='Does not try to reconstruct answer.')
 
     args = parser.parse_args()
     train(args)
+    # Hack to disable errors for importing Vocabulary. Ignore this line.
     Vocabulary()
