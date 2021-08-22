@@ -29,7 +29,6 @@ class textVQG(nn.Module):
             vocab_size: Number of words in the vocabulary.
             max_len: The maximum length of the answers we generate.
             hidden_size: Number of dimensions of RNN hidden cell.
-            num_categories: The number of answer categories.
             sos_id: Vocab id for <start>.
             eos_id: Vocab id for <end>.
             num_layers: The number of layers of the RNNs.
@@ -47,8 +46,6 @@ class textVQG(nn.Module):
         super(textVQG, self).__init__()
         self.answer_recon = not no_answer_recon
         self.image_recon = not no_image_recon
-        self.category_space = not no_category_space
-        self.num_categories = num_categories
         self.hidden_size = hidden_size
         if encoder_max_len is None:
             encoder_max_len = max_len
@@ -57,11 +54,6 @@ class textVQG(nn.Module):
         # Setup image encoder.
         self.encoder_cnn = EncoderCNN(hidden_size)
 
-        # Setup category encoder.
-        if self.category_space:
-            self.category_embedding = nn.Embedding(num_categories, hidden_size)
-            self.category_encoder = MLP(hidden_size, hidden_size, hidden_size,
-                               num_layers=num_layers)
 
         # Setup answer encoder.
         self.answer_encoder = EncoderRNN(vocab_size, max_len, hidden_size,
@@ -171,18 +163,7 @@ class textVQG(nn.Module):
         
         return self.encoder_cnn(images)
 
-    def encode_categories(self, categories):
-        """Encode categories.
-
-        Args:
-            categories: Batch of answer Tensors.
-
-        Returns:
-            Batch of categories encoded into features.
-        """
-        embedded_categories = self.category_embedding(categories)
-        encoder_hidden = self.category_encoder(embedded_categories)
-        return encoder_hidden
+ 
 
     def encode_answers(self, answers, alengths):
         """Encodes the answers.
@@ -302,7 +283,7 @@ class textVQG(nn.Module):
         return recon_answer_features
 
     def encode_from_answer(self, images, answers, lengths=None):
-        """Encodes images and categories in t-space.
+        """
 
         Args:
             images: Batch of image Tensor.
