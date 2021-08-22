@@ -1,7 +1,5 @@
-"""This script is used to VAE question generation.
+"""This script is used to generate text based visual question generator
 """
-
-#/media/shankar/05a3ed34-f47f-4e90-b99d-dd973f2b86da/VQA_REU
 
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -235,17 +233,7 @@ def compare_outputs(images, questions, answers, categories,
 
     for _ in range(num_show):
         logging.info("         ")
-        i = random.randint(0, images.size(0) - 1)  # Inclusive.
-
-        # Sample some types.
-        if not args.no_category_space:
-            category_outputs = vqg.predict_from_category(images, categories)
-            category_question = vocab.tokens_to_words(category_outputs[i])
-            logging.info('Typed question: %s' % category_question)
-            category_checks = sample_for_each_category(vqg, images[i], args)
-            category_checks = [cat2name[idx] + ': ' + vocab.tokens_to_words(category_checks[j])
-                           for idx, j in enumerate(range(category_checks.size(0)))]
-            logging.info('category checks: ' + ', '.join(category_checks))
+        i = random.randint(0, images.size(0) - 1)  # Inclusive
 
         # Log the outputs.
         output = vocab.tokens_to_words(outputs[i])
@@ -257,24 +245,6 @@ def compare_outputs(images, questions, answers, categories,
                         question, answer))
         logging.info("         ")
 
-
-def compute_two_gaussian_loss(mu1, logvar1, mu2, logvar2):
-    """Computes the KL loss between the embedding attained from the answers
-    and the categories.
-
-    KL divergence between two gaussians:
-        log(sigma_2/sigma_1) + (sigma_2^2 + (mu_1 - mu_2)^2)/(2sigma_1^2) - 0.5
-
-    Args:
-        mu1: Means from first space.
-        logvar1: Log variances from first space.
-        mu2: Means from second space.
-        logvar2: Means from second space.
-    """
-    numerator = logvar1.exp() + torch.pow(mu1 - mu2, 2)
-    fraction = torch.div(numerator, (logvar2.exp() + 1e-8))
-    kl = 0.5 * torch.sum(logvar2 - logvar1 + fraction - 1)
-    return kl / (mu1.size(0) + 1e-8)
 
 
 def train(args):
@@ -366,7 +336,6 @@ def train(args):
 
     # Optional losses. Initialized here for logging.
     recon_answer_loss = 0.0
-    #recon_image_loss = 0.0
   
   
   
@@ -404,38 +373,31 @@ def train(args):
 
             # Question generation.
             zs = vqg.encode_into_z(image_features, answer_features)
-
-            commbined = nn.stack(zs, mlp_feat, dim=)
-            combined = nn.Linear(1024, 512)
-            print("zs: ",zs.size())
-            #zs = vqg.reparameterize(mus, logvars)
+           
             (outputs, _, _) = vqg.decode_questions(
                     image_features, zs, questions=questions,
                     teacher_forcing_ratio=1.0)
-
-            #print("questions: ",questions.size())
+            
             # Reorder the questions based on length.
             questions = torch.index_select(questions, 0, qindices)
-            #print("questions: ",questions.size())
+           
 
             # Ignoring the start token.
             questions = questions[:, 1:]
-            #print("questions size: ",len(questions))
-            #print("output size: ",len(outputs))
             qlengths = process_lengths(questions)
 
             # Convert the output from MAX_LEN list of (BATCH x VOCAB) ->
             # (BATCH x MAX_LEN x VOCAB).
             outputs = [o.unsqueeze(1) for o in outputs]
-            #print("outputs: ",len(outputs))
+           
             outputs = torch.cat(outputs, dim=1)
-            #print("outputs: ", outputs.size())
+           
             outputs = torch.index_select(outputs, 0, qindices)
             print("outputs: ", outputs.size())
             # Calculate the generation loss.
             targets = pack_padded_sequence(questions, qlengths,
                                            batch_first=True)[0]
-            #print("target size: ",targets.size())                          
+                                   
             outputs = pack_padded_sequence(outputs, qlengths,
                                            batch_first=True)[0]
             print("target size: ",targets.size(),"----","output size: ",outputs.size())
@@ -454,28 +416,21 @@ def train(args):
             gen_optimizer.step()
 
             # Reconstruction loss.
-            recon_image_loss = 0.0
             recon_answer_loss = 0.0
-            if not args.no_answer_recon or not args.no_image_recon:
+            if not args.no_answer_recon:
                 total_info_loss = 0.0
                 gen_optimizer.zero_grad()
                 info_optimizer.zero_grad()
                 answer_targets = answer_features.detach()
-                image_targets = image_features.detach()
-                recon_image_features, recon_answer_features = vqg.reconstruct_inputs(
-                        image_targets, answer_targets)
+                
+                recon_answer_features = vqg.reconstruct_inputs(
+                         answer_targets)
 
                 # Answer reconstruction loss.
                 if not args.no_answer_recon:
                     recon_a_loss = l2_criterion(recon_answer_features, answer_targets)
                     total_info_loss += args.lambda_a * recon_a_loss
                     recon_answer_loss = recon_a_loss.item()
-
-                # Image reconstruction loss.
-                if not args.no_image_recon:
-                    recon_i_loss = l2_criterion(recon_image_features, image_targets)
-                    total_info_loss += args.lambda_i * recon_i_loss
-                    recon_image_loss = recon_i_loss.item()
 
                 # Info backprop.
                 total_info_loss.backward()
