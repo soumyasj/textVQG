@@ -15,7 +15,7 @@ import time
 import torch
 import torch.nn as nn
 from utils import NLGEval
-from models import IQ
+from models import textVQG
 from utils import Vocabulary
 from utils import get_glove_embedding
 from utils import get_loader
@@ -33,7 +33,7 @@ def create_model(args, vocab, embedding=None):
         vocab: Instance of Vocabulary.
 
     Returns:
-        An IQ model.
+        An textVQG model.
     """
     # Load GloVe embedding.
     if args.use_glove:
@@ -44,8 +44,8 @@ def create_model(args, vocab, embedding=None):
         embedding = None
 
     # Build the models
-    logging.info('Creating IQ model...')
-    vqg = IQ(len(vocab), args.max_length, args.hidden_size,
+    logging.info('Creating textVQG model...')
+    vqg = textVQG(len(vocab), args.max_length, args.hidden_size,
              args.num_categories,
              vocab(vocab.SYM_SOQ), vocab(vocab.SYM_EOS),
              num_layers=args.num_layers,
