@@ -45,7 +45,6 @@ class textVQG(nn.Module):
         """
         super(textVQG, self).__init__()
         self.answer_recon = not no_answer_recon
-        self.image_recon = not no_image_recon
         self.hidden_size = hidden_size
         if encoder_max_len is None:
             encoder_max_len = max_len
