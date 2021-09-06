@@ -8,5 +8,5 @@ This is repository for textVQG. Download the datasets from ICDAR 2019 St-VQA cha
 5. To evaluate the model run python evaluate_textvqg.py
 
 The following are some results of the proposed method:
-
-![results](https://user-images.githubusercontent.com/44959352/132222615-4387fc2d-9eb8-4503-b402-76961566fb5a.png)
+![res1](https://user-images.githubusercontent.com/44959352/132222886-1fd59167-772d-457c-b0b9-165cc81ea25d.png)
+![res2](https://user-images.githubusercontent.com/44959352/132222906-1ee94d1f-ce27-483a-8368-ad0b6b1b38a1.png)
