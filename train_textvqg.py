@@ -1,18 +1,16 @@
 """This script is used to generate text based visual question generator
 """
 
-from torch.nn.utils.rnn import pack_padded_sequence
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torchvision import transforms
+
+
 import argparse
 import json
 import logging
 import os
 import random
 import time
-import torch
 import torch.nn as nn
-from utils import NLGEval
+import torchfrom utils import NLGEval
 from models import textVQG
 from utils import Vocabulary
 from utils import get_glove_embedding
@@ -20,6 +18,12 @@ from utils import get_loader
 from utils import load_vocab
 from utils import process_lengths
 from utils import gaussian_KL_loss
+from torch.nn.utils.rnn import pack_padded_sequence
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torchvision import transforms
+
+
+
 
 
 
@@ -62,7 +66,7 @@ def evaluate(vqg, data_loader, criterion, l2_criterion, args):
     """Calculates vqg average loss on data_loader.
 
     Args:
-        vqg: question generation model.
+        vqg: text-based visual question generation model.
         data_loader: Iterator for the data.
         criterion: The loss function used to evaluate the loss.
         l2_criterion: The loss function used to evaluate the l2 loss.
