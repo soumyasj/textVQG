@@ -20,11 +20,11 @@ from utils import process_lengths
 from utils import get_glove_embedding
 
 
-def evaluate(vqg, data_loader, vocab, args, params):
+def evaluate(textvqg, data_loader, vocab, args, params):
     """Runs BLEU, METEOR, CIDEr and distinct n-gram scores.
 
     Args:
-        vqg: question generation model.
+        text vqg: text visual question generation model.
         data_loader: Iterator for the data.
         args: ArgumentParser object.
         params: ArgumentParser object.
@@ -32,7 +32,7 @@ def evaluate(vqg, data_loader, vocab, args, params):
     Returns:
         A float value of average loss.
     """
-    vqg.eval()
+    textvqg.eval()
     nlge = NLGEval(no_glove=True, no_skipthoughts=True)
     preds = []
     gts = []
@@ -48,7 +48,7 @@ def evaluate(vqg, data_loader, vocab, args, params):
         print(images.size(0))
         # Predict.
         if args.from_answer:
-            outputs = vqg.predict_from_answer(images, answers, alengths)
+            outputs = textvqg.predict_from_answer(images, answers, alengths)
         
 
         for i in range(images.size(0)):
@@ -119,7 +119,7 @@ def main(args):
 
     # Build the models
     logging.info('Creating textVQG model...')
-    vqg = textVQG(len(vocab), params.max_length, params.hidden_size,
+    textvqg = textVQG(len(vocab), params.max_length, params.hidden_size,
              vocab(vocab.SYM_SOQ), vocab(vocab.SYM_EOS),
              num_layers=params.num_layers,
              rnn_cell=params.rnn_cell,
@@ -133,16 +133,16 @@ def main(args):
     logging.info("Done")
 
     logging.info("Loading model.")
-    vqg.load_state_dict(torch.load(args.model_path))
+    textvqg.load_state_dict(torch.load(args.model_path))
 
     # Setup GPUs.
     
     if torch.cuda.is_available():
         logging.info("Using available GPU...")
-        vqg.cuda()
+        textvqg.cuda()
    
 
-    scores, gts, preds = evaluate(vqg, data_loader, vocab, args, params)
+    scores, gts, preds = evaluate(textvqg, data_loader, vocab, args, params)
 
     # Print and save the scores.
     print scores
