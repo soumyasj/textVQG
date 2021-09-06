@@ -6,3 +6,7 @@ This is repository for textVQG. Download the datasets from ICDAR 2019 St-VQA cha
 3. To store the textVQG dataset in .hdf5 file run python /utils/store_dataset.py
 4. To train the model run python train_textvqg.py
 5. To evaluate the model run python evaluate_textvqg.py
+
+The following are some results of the proposed method:
+
+![results](https://user-images.githubusercontent.com/44959352/132222615-4387fc2d-9eb8-4503-b402-76961566fb5a.png)
