@@ -37,11 +37,13 @@ class textVQGDataset(data.Dataset):
             self.answers = annos['answers']
             self.image_indices = annos['image_indices']
             self.images = annos['images']
+            self.ocr_positions = annos['bounding_box']
 
         if self.indices is not None:
             index = self.indices[index]
         question = self.questions[index]
         answer = self.answers[index]
+        ocr_pos = self.ocr_positions[index]
         image_index = self.image_indices[index]
         image = self.images[image_index]
 
@@ -52,7 +54,7 @@ class textVQGDataset(data.Dataset):
         if self.transform is not None:
             image = self.transform(image)
         return (image, question, answer,
-                qlength.item(), alength.item())
+                qlength.item(), alength.item(), ocr_pos)
 
     def __len__(self):
         if self.max_examples is not None:
@@ -67,13 +69,14 @@ def collate_fn(data):
     
     # Sort a data list by caption length (descending order).
     data.sort(key=lambda x: x[5], reverse=True)
-    images, questions, answers, qlengths, _ = zip(*data)
+    images, questions, answers, qlengths,ocr_positions, _ = zip(*data)
     images = torch.stack(images, 0)
     questions = torch.stack(questions, 0).long()
     answers = torch.stack(answers, 0).long()
     qindices = np.flip(np.argsort(qlengths), axis=0).copy()
     qindices = torch.Tensor(qindices).long()
-    return images, questions, answers,  qindices
+    ocr_positions = torch.stack(ocr_positions, 0).long()
+    return images, questions, answers,  qindices, ocr_positions
 
 
 def get_loader(dataset, transform, batch_size, sampler=None,
