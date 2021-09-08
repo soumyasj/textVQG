@@ -1,4 +1,6 @@
 # textVQG
+This repository contains code for the model presented in the paper "Look, Read and Ask: Learning to Ask Question By Reading Text in Images", https://link.springer.com/chapter/10.1007/978-3-030-86549-8_22.
+
 This is repository for textVQG. Download the datasets from ICDAR 2019 St-VQA challenge "https://rrc.cvc.uab.es/?ch=11". The method also works on textVQA dataset which can be downloaded from "https://textvqa.org/".
 
 1. Install requirements present in requirements.txt
