@@ -182,7 +182,14 @@ class textVQG(nn.Module):
         encoder_hidden = encoder_hidden[-1, :, :].squeeze()
         return encoder_hidden
 
-    def encode_into_z(self, image_features, answer_features):
+    def encode_position(self, bbox):
+        """Encodes the ocr positions.
+        Returns batch of ocr token positions
+        """
+
+        return bbox
+
+    def encode_into_z(self, image_features, answer_features, bbox):
         """Encodes the attended features into z space.
 
         Args:
@@ -193,7 +200,7 @@ class textVQG(nn.Module):
             mus and logvars of the batch.
         """
        
-        together = torch.cat((image_features, answer_features), dim=1)
+        together = torch.cat((image_features, answer_features, bbox), dim=1)
         attended_hiddens = self.answer_attention(together)
         return attended_hiddens
 
@@ -256,7 +263,7 @@ class textVQG(nn.Module):
         answer_hiddens = self.encode_answers(answers, alengths)
 
         # Calculate the mus and logvars.
-        zs = self.encode_into_z(image_features, answer_hiddens)
+        zs = self.encode_into_z(image_features, answer_hiddens, bbox)
       
         result = self.decode_questions(image_features, zs,
                                        questions=questions,
@@ -276,7 +283,7 @@ class textVQG(nn.Module):
         """
        
         recon_answer_features = None
-        zs = self.encode_into_z(image_features, answer_features)
+        zs = self.encode_into_z(image_features, answer_features, bbox)
         if self.answer_recon:
             recon_answer_features = self.answer_reconstructor(zs)
         return recon_answer_features
@@ -294,7 +301,7 @@ class textVQG(nn.Module):
         """
         image_features = self.encode_images(images)
         answer_hiddens = self.encode_answers(answers, lengths)
-        zs = self.encode_into_z(image_features, answer_hiddens)
+        zs = self.encode_into_z(image_features, answer_hiddens, bbox)
         
         return image_features, zs
 
