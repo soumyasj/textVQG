@@ -56,6 +56,8 @@ def save_dataset(image_dir, questions, annotations, vocab,output,
         "images", (total_images, im_size, im_size, 3), dtype='f')
     d_answers = h5file.create_dataset(
         "answers", (total_questions, max_a_length), dtype='i')
+    d_ocr_positions = h5file.create_dataset(
+        "ocr_positions", (total_questions, 8), dtype='f')
     
 
     # Create the transforms we want to apply to every image.
@@ -95,7 +97,7 @@ def save_dataset(image_dir, questions, annotations, vocab,output,
         a, length = process_text(answer, vocab,
                                  max_length=max_a_length)
         d_answers[q_index, :length] = a
-
+        d_ocr_positions[q_index, 8] = entry.get("bounding_box")
         que_type = entry.get("dataset")
         
         
