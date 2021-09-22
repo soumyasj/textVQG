@@ -1,3 +1,5 @@
+#Decoder RNN to generate questions
+
 from torch.autograd import Variable
 FLAG=False
 
