@@ -1,6 +1,7 @@
 # textVQG
 
 **Implementation of the paper Look, Read and Ask: Learning to Ask Questions by Reading Text in Images (ICDAR-2021)**
+(Resolving some issues with respect to evaluation in progress. [Issue with NLG_eval and evaluate_textvqg.py code. The model was previously trained in python 2.7 environment and new is being changed to python 3.8. Will update the complete code sooner.])
 
 [paper](https://link.springer.com/chapter/10.1007/978-3-030-86549-8_22)
 
