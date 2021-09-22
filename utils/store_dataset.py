@@ -12,20 +12,20 @@ import os
 import progressbar
 
 from train_utils import Vocabulary
-from vocab import load_vocab
-from vocab import process_text
+from vvv import load_vocab
+from vvv import process_text
 
 
 def create_answer_mapping(annotations,annos):
     
-    data = annotations.get("data")
+    data = annotations
     answers = {}
     image_ids = set()
     for q in data:
         question_id = q.get("question_id")
-        answer = q.get("answers")[0]
+        answer = q.get("answer")
         answers[question_id] = answer
-        image_ids.add(q.get("file_path"))
+        image_ids.add(q.get("image_id"))
     return answers, image_ids
 
 
@@ -34,6 +34,7 @@ def save_dataset(image_dir, questions, annotations, vocab,output,
                  with_answers=False):
     
     # Load the data.
+    max_ocr_len=8
     vocab = load_vocab(vocab)
     with open(annotations) as f:
         annos = json.load(f)
@@ -44,8 +45,8 @@ def save_dataset(image_dir, questions, annotations, vocab,output,
     qid2ans, image_ids = create_answer_mapping(annos, annos)
     total_questions = len(qid2ans.keys())
     total_images = len(image_ids)
-    print "Number of images to be written: %d" % total_images
-    print "Number of QAs to be written: %d" % total_questions
+    print ("Number of images to be written: %d" % total_images)
+    print ("Number of QAs to be written: %d" % total_questions)
 
     h5file = h5py.File(output, "w")
     d_questions = h5file.create_dataset(
@@ -57,7 +58,7 @@ def save_dataset(image_dir, questions, annotations, vocab,output,
     d_answers = h5file.create_dataset(
         "answers", (total_questions, max_a_length), dtype='i')
     d_ocr_positions = h5file.create_dataset(
-        "ocr_positions", (total_questions, 8), dtype='f')
+        "ocr_positions", (total_questions, max_ocr_len), dtype='f')
     
 
     # Create the transforms we want to apply to every image.
@@ -65,14 +66,14 @@ def save_dataset(image_dir, questions, annotations, vocab,output,
         transforms.Resize((im_size, im_size))])
 
     # Iterate and save all the questions and images.
-    bar = progressbar.ProgressBar(maxval=total_questions)
-    i_index = 0
-    q_index = 0
+    # bar = progressbar.ProgressBar(maxval=total_questions)
+    i_index = 1
+    q_index = 1
     done_img2idx = {}
-    questions1 = questions.get("data")
+    questions1 = questions
     #print(questions1)
     for entry in questions1:
-        image_id = entry.get("file_path")
+        image_id = entry.get("image_id")
         question_id = entry.get("question_id")
         if image_id not in image_ids:
             continue
@@ -80,10 +81,10 @@ def save_dataset(image_dir, questions, annotations, vocab,output,
             continue
         if image_id not in done_img2idx:
             try:
-                path =  "/home/shankar/Desktop/VQA_REU/Stvqa/ST-VQA/"+ (image_id)
+                path =  "D:/NEW_LAPTOP/Desktop_files/Research/check_textvqg/data/train_images/"+ (image_id)+'.jpg'
                 image = Image.open(os.path.join(image_dir, path)).convert('RGB')
             except IOError:
-                path =  "/home/shankar/Desktop/VQA_REU/Stvqa/ST-VQA/"+ (image_id)
+                path =  "D:/NEW_LAPTOP/Desktop_files/Research/check_textvqg/data/train_images/"+ (image_id)+'.jpg'
                 image = Image.open(os.path.join(image_dir, path)).convert('RGB')
             image = transform(image)
             
@@ -93,42 +94,49 @@ def save_dataset(image_dir, questions, annotations, vocab,output,
         q, length = process_text(entry['question'], vocab,
                                  max_length=max_q_length)
         d_questions[q_index, :length] = q
+        # print(q, "----" ,d_questions[q_index, :length],"len is: ", length)
         answer = qid2ans[question_id]
         a, length = process_text(answer, vocab,
                                  max_length=max_a_length)
         d_answers[q_index, :length] = a
-        d_ocr_positions[q_index, 8] = entry.get("bounding_box")
-        que_type = entry.get("dataset")
+        ocr_len = len(list(entry.get("ocr_position").values()))
+        process_ocr_pos = entry.get("ocr_position")
+        # print("pos: ", list((process_ocr_pos.values())))
+        # print(entry.get("ocr_position"))
+        d_ocr_positions[q_index, :8] = list(process_ocr_pos.values())
+        # print(d_ocr_positions)
+        # print("holaaaa", d_ocr_positions[q_index, ocr_len])
         
+    
         
         d_indices[q_index] = done_img2idx[image_id]
         q_index += 1
-        bar.update(q_index)
+        # bar.update(q_index)
     h5file.close()
-    print "Number of images written: %d" % i_index
-    print "Number of QAs written: %d" % q_index
+    print ("Number of images written: %d" % i_index)
+    print ("Number of QAs written: %d" % q_index)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # Inputs.
-    parser.add_argument('--image-dir', type=str, default='/home/shankar/Desktop/VQA_REU/Stvqa/ST-VQA/',
+    parser.add_argument('--image-dir', type=str, default='D:/NEW_LAPTOP/Desktop_files/Research/check_textvqg/data/train_images',
                         help='directory for resized images')
     parser.add_argument('--questions', type=str,
-                        default='/home/shankar/Desktop/VQA_REU/Stvqa/train_task_2.json',
+                        default='D:/NEW_LAPTOP/Desktop_files/Research/check_textvqg/textVQG/textvqa_qa_ocr_data.json',
                         help='Path for train annotation file.')
     parser.add_argument('--annotations', type=str,
-                        default='/home/shankar/Desktop/VQA_REU/Stvqa/train_task_2.json',
+                        default='D:/NEW_LAPTOP/Desktop_files/Research/check_textvqg/textVQG/textvqa_qa_ocr_data.json',
                         help='Path for train annotation file.')
     
     parser.add_argument('--vocab-path', type=str,
-                        default='/home/shankar/Desktop/VQA_REU/Stvqa/vocab_textvqg.json',
+                        default='D:/NEW_LAPTOP/Desktop_files/Research/check_textvqg/textVQG/vocab_iq1.json',
                         help='Path for saving vocabulary wrapper.')
 
     # Outputs.
     parser.add_argument('--output', type=str,
-                        default='/home/shankar/Desktop/VQA_REU/Stvqa/textvqg_dataset.hdf5',
+                        default='D:/NEW_LAPTOP/Desktop_files/Research/check_textvqg/textVQG/textvqg_dataset1.hdf5',
                         help='directory for resized images.')
     
 
