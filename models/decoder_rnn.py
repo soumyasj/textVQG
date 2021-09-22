@@ -41,7 +41,7 @@ class DecoderRNN(BaseRNN):
         self.out = nn.Linear(self.hidden_size, self.output_size)
         self.init_weights()
 
-    def init_weights(self):0
+    def init_weights(self):
         self.embedding.weight.data.uniform_(-0.1, 0.1)
         self.out.weight.data.uniform_(-0.1, 0.1)
         self.out.bias.data.fill_(0)

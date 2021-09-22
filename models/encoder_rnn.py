@@ -25,13 +25,14 @@ class EncoderRNN(BaseRNN):
         
         self.embedding.weight.data.uniform_(-0.1, 0.1)
 
-    def forward(self, input_var, input_lengths=None, h0=None):
+    def forward(self, input_var, input_lengths, h0=None):
         
         embedded = self.embedding(input_var)
         embedded = self.input_dropout(embedded)
+        # print("input input_lengths: ---",input_lengths)
         if self.variable_lengths:
             embedded = nn.utils.rnn.pack_padded_sequence(
-                    embedded, input_lengths, batch_first=True)
+                    embedded, input_lengths, batch_first=True,enforce_sorted=False)
         output, hidden = self.rnn(embedded, h0)
         if self.variable_lengths:
             output, _ = nn.utils.rnn.pad_packed_sequence(

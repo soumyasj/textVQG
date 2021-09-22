@@ -1,1 +1,1 @@
-from .iq import IQ
+from .textVQG import textVQG

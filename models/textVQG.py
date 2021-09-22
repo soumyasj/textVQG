@@ -17,7 +17,7 @@ class textVQG(nn.Module):
     """
 
     def __init__(self, vocab_size, max_len, hidden_size,
-                 num_categories, sos_id, eos_id,
+                  sos_id, eos_id,
                  num_layers=1, rnn_cell='LSTM', bidirectional=False,
                  input_dropout_p=0, dropout_p=0,
                  encoder_max_len=None, num_att_layers=2, att_ff_size=512,
@@ -64,7 +64,7 @@ class textVQG(nn.Module):
                                          variable_lengths=True)
 
         # Setup stacked attention to combine image and answer features.
-        self.answer_attention = MLP(2*hidden_size, att_ff_size, hidden_size,
+        self.answer_attention = MLP(3*hidden_size, att_ff_size, hidden_size,
                                     num_layers=num_att_layers)
 
         # Setup question decoder.
@@ -172,6 +172,7 @@ class textVQG(nn.Module):
         Returns:
             batch of answer features.
         """
+        # print(answers,alengths)
        
         _, encoder_hidden = self.answer_encoder(
                 answers, alengths, None)
@@ -186,6 +187,7 @@ class textVQG(nn.Module):
         """Encodes the ocr positions.
         Returns batch of ocr token positions
         """
+        # print(len(bbox))
 
         return bbox
 
@@ -199,8 +201,12 @@ class textVQG(nn.Module):
         Returns:
             mus and logvars of the batch.
         """
-       
-        together = torch.cat((image_features, answer_features, bbox), dim=1)
+        # print("image_features:--", answer_features.shape)
+        bbox1 = bbox.repeat(1, 64)
+        # print(bbox1)
+        together = torch.cat((image_features, answer_features,bbox1), dim=1)
+        # print(together.shape)
+        
         attended_hiddens = self.answer_attention(together)
         return attended_hiddens
 
@@ -272,7 +278,7 @@ class textVQG(nn.Module):
 
         return result
 
-    def reconstruct_inputs(self, image_features, answer_features):
+    def reconstruct_inputs(self, image_features, answer_features,bbox):
         """
 
         Args:
@@ -288,7 +294,7 @@ class textVQG(nn.Module):
             recon_answer_features = self.answer_reconstructor(zs)
         return recon_answer_features
 
-    def encode_from_answer(self, images, answers, lengths=None):
+    def encode_from_answer(self, images, answers,bbox, lengths=None):
         """
 
         Args:
@@ -307,7 +313,7 @@ class textVQG(nn.Module):
 
 
 
-    def predict_from_answer(self, images, answers, lengths=None,
+    def predict_from_answer(self, images, answers,bbox, lengths=None,
                             questions=None, teacher_forcing_ratio=0,
                             decode_function=F.log_softmax):
         """Outputs the predicted vocab tokens for the answers in a minibatch.
@@ -325,7 +331,7 @@ class textVQG(nn.Module):
             A tensor with BATCH_SIZE X MAX_LEN where each element is the index
             into the vocab word.
         """
-        image_features, zs = self.encode_from_answer(images, answers, lengths=lengths)
+        image_features, zs = self.encode_from_answer(images, answers,bbox, lengths=lengths)
         outputs, _, _ = self.decode_questions(image_features, zs, questions=questions,
                                               decode_function=decode_function,
                                               teacher_forcing_ratio=teacher_forcing_ratio)
