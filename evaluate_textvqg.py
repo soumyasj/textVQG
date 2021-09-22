@@ -17,7 +17,7 @@ from utils import Vocabulary
 from utils import get_loader
 from utils import load_vocab
 from utils import process_lengths
-from utils import get_glove_embedding
+from utils import get_FastText_embedding
 
 
 def evaluate(textvqg, data_loader, vocab, args, params):
@@ -33,7 +33,7 @@ def evaluate(textvqg, data_loader, vocab, args, params):
         A float value of average loss.
     """
     textvqg.eval()
-    nlge = NLGEval(no_glove=True, no_skipthoughts=True)
+    nlge = NLGEval(no_FastText=True, no_skipthoughts=True)
     preds = []
     gts = []
     bar = progressbar.ProgressBar(maxval=len(data_loader))
@@ -101,9 +101,9 @@ def main(args):
     # Build data loader
     logging.info("Building data loader...")
 
-    # Load GloVe embedding.
-    if params.use_glove:
-        embedding = get_glove_embedding(params.embedding_name,
+    # Load FastText embedding.
+    if params.use_FastText:
+        embedding = get_FastText_embedding(params.embedding_name,
                                         params.hidden_size,
                                         vocab)
     else:

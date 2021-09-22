@@ -10,20 +10,17 @@ import os
 import random
 import time
 import torch.nn as nn
-import torchfrom utils import NLGEval
+# from utils import NLGEval
 from models import textVQG
 from utils import Vocabulary
-from utils import get_glove_embedding
+from utils import get_FastText_embedding
 from utils import get_loader
 from utils import load_vocab
 from utils import process_lengths
-from utils import gaussian_KL_loss
+import torch
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision import transforms
-
-
-
 
 
 
@@ -37,9 +34,9 @@ def create_model(args, vocab, embedding=None):
     Returns:
         An textVQG model.
     """
-    # Load GloVe embedding.
-    if args.use_glove:
-        embedding = get_glove_embedding(args.embedding_name,
+    # Load FastText embedding.
+    if args.use_FastText:
+        embedding = get_FastText_embedding(args.embedding_name,
                                         args.hidden_size,
                                         vocab)
     else:
@@ -76,7 +73,7 @@ def evaluate(textvqg, data_loader, criterion, l2_criterion, args):
     """
     textvqg.eval()
     total_gen_loss = 0.0
-    total_recon_image_loss = 0.0
+    total_info_loss = 0.0
     total_steps = len(data_loader)
     if args.eval_steps is not None:
         total_steps = min(len(data_loader), args.eval_steps)
@@ -90,8 +87,13 @@ def evaluate(textvqg, data_loader, criterion, l2_criterion, args):
             answers = answers.cuda()
             qindices = qindices.cuda()
             bbox = bbox.cuda()
+        
+        images = images[:-1]
+        questions = questions[:-1]
+        answers = answers[:-1]
+        qindices = qindices[:-1]
+        bbox = bbox[:-1]
         alengths = process_lengths(answers)
-
         # Forward, Backward and Optimize
         image_features = textvqg.encode_images(images)
         answer_features = textvqg.encode_answers(answers, alengths)
@@ -104,7 +106,7 @@ def evaluate(textvqg, data_loader, criterion, l2_criterion, args):
                 teacher_forcing_ratio=1.0)
 
         # Reorder the questions based on length.
-        questions = torch.index_select(questions, 0, qindices)
+        # questions = torch.index_select(questions, 0, qindices)
 
         # Ignoring the start token.
         questions = questions[:, 1:]
@@ -114,7 +116,7 @@ def evaluate(textvqg, data_loader, criterion, l2_criterion, args):
         # (BATCH x MAX_LEN x VOCAB).
         outputs = [o.unsqueeze(1) for o in outputs]
         outputs = torch.cat(outputs, dim=1)
-        outputs = torch.index_select(outputs, 0, qindices)
+        # outputs = torch.index_select(outputs, 0, qindices)
 
         # Calculate the loss.
         targets = pack_padded_sequence(questions, qlengths,
@@ -129,11 +131,9 @@ def evaluate(textvqg, data_loader, criterion, l2_criterion, args):
         if not args.no_image_recon or not args.no_answer_recon:
             image_targets = image_features.detach()
             answer_targets = answer_features.detach()
-            recon_image_features, recon_answer_features = textvqg.reconstruct_inputs(
-                    image_targets, answer_targets)
-            if not args.no_image_recon:
-                recon_i_loss = l2_criterion(recon_image_features, image_targets)
-                total_recon_image_loss += recon_i_loss.item()
+            recon_answer_features = textvqg.reconstruct_inputs(
+                    image_targets, answer_targets,bbox)
+            
             if not args.no_answer_recon:
                 recon_a_loss = l2_criterion(recon_answer_features, answer_targets)
                 
@@ -146,14 +146,13 @@ def evaluate(textvqg, data_loader, criterion, l2_criterion, args):
         if iterations % args.log_step == 0:
              delta_time = time.time() - start_time
              start_time = time.time()
-             logging.info('Time: %.4f, Step [%d/%d], gen loss: %.4f, '
-                          ' I-recon: %.4f, A-recon: %.4f, '
+             # logging.info('Time: %.4f, Step [%d/%d], gen loss: %.4f, '
+             #              '  A-recon: %.4f, '
         
-                         % (delta_time, iterations, total_steps,
-                            total_gen_loss/(iterations+1),
-                            total_recon_image_loss/(iterations+1),
-                            ))
-    total_info_loss = total_recon_image_loss 
+             #             % (delta_time, iterations, 
+             #                total_gen_loss/(iterations+1),
+             #                ))
+    
     return total_gen_loss / (iterations+1), total_info_loss / (iterations + 1)
 
 
@@ -173,7 +172,7 @@ def run_eval(textvqg, data_loader, criterion, l2_criterion, args, epoch,
 
 
 
-def compare_outputs(images, questions, answers, 
+def compare_outputs(images, questions, answers, bbox,
                     alengths, textvqg, vocab, logging,
                     args, num_show=8):
     """Sanity check generated output as we train.
@@ -190,7 +189,7 @@ def compare_outputs(images, questions, answers,
     textvqg.eval()
 
     # Forward pass through the model.
-    outputs = textvqg.predict_from_answer(images, answers, lengths=alengths)
+    outputs = textvqg.predict_from_answer(images, answers,bbox, lengths=alengths)
 
     for _ in range(num_show):
         logging.info("         ")
@@ -200,8 +199,8 @@ def compare_outputs(images, questions, answers,
         output = vocab.tokens_to_words(outputs[i])
         question = vocab.tokens_to_words(questions[i])
         answer = vocab.tokens_to_words(answers[i])
-        logging.info('Sampled question : %s\n'
-                     'Target  question (%s): %s -> %s'
+        logging.info('Generated question : %s\n'
+                     'Target  question (%s): -> %s'
                      % (output, 
                         question, answer))
         logging.info("         ")
@@ -296,36 +295,45 @@ def train(args):
     # Optional losses. Initialized here for logging.
     recon_answer_loss = 0.0
   
-  
+    total_info_loss = 0.0
   
     for epoch in range(args.num_epochs):
-        for i, (images, questions, answers, qindices) in enumerate(data_loader):
+        for i, (images, questions, answers, qindices, bbox) in enumerate(data_loader):
             n_steps += 1
-           
+            images=images[:-1]
+            questions=questions[:-1]
+            answers=((answers[:-1]))
+            # print(answers)
+
+            qindices = qindices[:-1]
+            # print(qindices)
+            bbox = bbox[:-1]
             # Set mini-batch dataset.
             if torch.cuda.is_available():
                 images = images.cuda()
                 questions = questions.cuda()
                 answers = answers.cuda()
                 qindices = qindices.cuda()
+                bbox = bbox.cuda()
             alengths = process_lengths(answers)
-
+            # print(bbox)
             # Eval now.
             if (args.eval_every_n_steps is not None and
                     n_steps >= args.eval_every_n_steps and
                     n_steps % args.eval_every_n_steps == 0):
                 run_eval(textvqg, val_data_loader, criterion, l2_criterion,
                          args, epoch, scheduler, info_scheduler)
-                compare_outputs(images, questions, answers, 
-                                alengths, textvqg, vocab, logging,  args)
+            compare_outputs(images, questions, answers, bbox,
+                            alengths, textvqg, vocab, logging,  args)
 
             # Forward.
             textvqg.train()
             gen_optimizer.zero_grad()
             info_optimizer.zero_grad()
             image_features = textvqg.encode_images(images)
+            # print(answers, alengths)bb
             answer_features = textvqg.encode_answers(answers, alengths)
-            ocr_token_pos = textvqg.encode_ocr_pos()
+            ocr_token_pos = textvqg.encode_position(bbox)
             #print("answer features: ",answer_features.size())
 
             # Question generation.
@@ -336,7 +344,7 @@ def train(args):
                     teacher_forcing_ratio=1.0)
             
             # Reorder the questions based on length.
-            questions = torch.index_select(questions, 0, qindices)
+            # questions = torch.index_select(questions, 0, qindices)
            
 
             # Ignoring the start token.
@@ -349,15 +357,15 @@ def train(args):
            
             outputs = torch.cat(outputs, dim=1)
            
-            outputs = torch.index_select(outputs, 0, qindices)
-            print("outputs: ", outputs.size())
+            # outputs = torch.index_select(outputs, 0, qindices)
+            # print("outputs: ", outputs.size())
             # Calculate the generation loss.
             targets = pack_padded_sequence(questions, qlengths,
                                            batch_first=True)[0]
                                    
             outputs = pack_padded_sequence(outputs, qlengths,
                                            batch_first=True)[0]
-            print("target size: ",targets.size(),"----","output size: ",outputs.size())
+            # print("target size: ",targets.size(),"----","output size: ",outputs.size())
             #break;
             gen_loss = criterion(outputs, targets)
             total_loss = 0.0
@@ -378,10 +386,11 @@ def train(args):
                 total_info_loss = 0.0
                 gen_optimizer.zero_grad()
                 info_optimizer.zero_grad()
+                image_targets = image_features.detach()
                 answer_targets = answer_features.detach()
                 
                 recon_answer_features = textvqg.reconstruct_inputs(
-                         answer_targets)
+                         image_targets,answer_targets,bbox)
 
                 # Answer reconstruction loss.
                 if not args.no_answer_recon:
@@ -401,12 +410,11 @@ def train(args):
                 start_time = time.time()
                 logging.info('Time: %.4f, Epoch [%d/%d], Step [%d/%d], '
                              'LR: %f, gen: %.4f,  '
-                             'I-recon: %.4f, A-recon: %.4f, '
+                             ' A-recon: %.4f, '
                              
                              % (delta_time, epoch, args.num_epochs, i,
                                 total_steps, gen_optimizer.param_groups[0]['lr'],
-                                gen_loss, 
-                                recon_image_loss, recon_answer_loss
+                                gen_loss,  recon_answer_loss
                                 ))
 
             
@@ -417,6 +425,8 @@ def train(args):
                            os.path.join(args.model_path,
                                         'textvqg-tf-%d-%d.pkl'
                                         % (epoch + 1, i + 1)))
+            compare_outputs(images, questions, answers, bbox,
+                            alengths, textvqg, vocab, logging,  args)
 
         torch.save(textvqg.state_dict(),
                    os.path.join(args.model_path,
@@ -443,7 +453,7 @@ if __name__ == '__main__':
                         help='Number of eval steps to run.')
     parser.add_argument('--eval-every-n-steps', type=int, default=300,
                         help='Run eval after every N steps.')
-    parser.add_argument('--num-epochs', type=int, default=20)
+    parser.add_argument('--num-epochs', type=int, default=1)
     parser.add_argument('--batch-size', type=int, default=32)
     parser.add_argument('--num-workers', type=int, default=8)
     parser.add_argument('--learning-rate', type=float, default=0.001)
@@ -468,20 +478,14 @@ if __name__ == '__main__':
 
     # Data parameters.
     parser.add_argument('--vocab-path', type=str,
-                        default='/media/shankar/05a3ed34-f47f-4e90-b99d-dd973f2b86da/VQA_REU/Stvqa/vocab_iq_task_1.json',
+                        default='D:/NEW_LAPTOP/Desktop_files/Research/check_textvqg/textVQG/vocab_iq1.json',
                         help='Path for vocabulary wrapper.')
     parser.add_argument('--dataset', type=str,
-                        default='/media/shankar/05a3ed34-f47f-4e90-b99d-dd973f2b86da/VQA_REU/Stvqa/iq_dataset_cat.hdf5',
+                        default='D:/NEW_LAPTOP/Desktop_files/Research/check_textvqg/textVQG/textvqg_dataset1.hdf5',
                         help='Path for train annotation json file.')
     parser.add_argument('--val-dataset', type=str,
-                        default='/media/shankar/05a3ed34-f47f-4e90-b99d-dd973f2b86da/VQA_REU/Stvqa/iq_dataset_cat.hdf5',
+                        default='D:/NEW_LAPTOP/Desktop_files/Research/check_textvqg/textVQG/textvqg_dataset1.hdf5',
                         help='Path for train annotation json file.')
-    parser.add_argument('--train-dataset-weights', type=str,
-                        default='/media/shankar/05a3ed34-f47f-4e90-b99d-dd973f2b86da/VQA_REU/Stvqa/data/processed/iq_train_dataset_weights2.json',
-                        help='Location of sampling weights for training set.')
-    parser.add_argument('--val-dataset-weights', type=str,
-                        default='/media/shankar/05a3ed34-f47f-4e90-b99d-dd973f2b86da/VQA_REU/Stvqa/data/processed/iq_val_dataset_weights2.json',
-                        help='Location of sampling weights for training set.')
     parser.add_argument('--load-model', type=str, default=None,
                         help='Location of where the model weights are.')
 
@@ -499,10 +503,10 @@ if __name__ == '__main__':
                         help='Maximum sequence length for inputs.')
     parser.add_argument('--bidirectional', action='store_true', default=False,
                         help='Boolean whether the RNN is bidirectional.')
-    parser.add_argument('--use-glove', action='store_true',
-                        help='Whether to use GloVe embeddings.')
+    parser.add_argument('--use-FastText', action='store_true',
+                        help='Whether to use FastText embeddings.')
     parser.add_argument('--embedding-name', type=str, default='6B',
-                        help='Name of the GloVe embedding to use.')
+                        help='Name of the FastText embedding to use.')
     parser.add_argument('--dropout-p', type=float, default=0.3,
                         help='Dropout applied to the RNN model.')
     parser.add_argument('--input-dropout-p', type=float, default=0.3,
